@@ -33,8 +33,7 @@ async def startup():
         'cogs.registration',
         'cogs.polls',
         'cogs.grading',
-        'cogs.sessions',
-        'jishaku'
+        'cogs.sessions'
     )
     for cog in cogs:
         await bot.load_extension(cog)
