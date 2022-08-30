@@ -89,17 +89,19 @@ class Registration(commands.Cog):
             err_msg = ''
 
             for row in sections:
-                role = discord.Object(id=row[3])
+                role = inter.guild.get_role(row[3])
                 if row[0] == section_id:
                     if role not in inter.user.roles:
                         try:
                             await inter.user.add_roles(role)
+                            print(f'added role {role.name}')
                         except Exception as err:
                             err_msg = str(err)
                 else:
                     if role in inter.user.roles:
                         try:
                             await inter.user.remove_roles(role)
+                            print(f'removed role {role.name}')
                         except Exception as err:
                             err_msg = str(err)
 
