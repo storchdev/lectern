@@ -3,7 +3,10 @@ from discord.ext import commands
 from config import TOKEN, DB_FILENAME
 import os
 from cogs.utils import get_emojis
+import logging
 
+
+# logging.basicConfig(level=logging.DEBUG)
 
 if not os.path.exists(DB_FILENAME):
     new = True

@@ -5,6 +5,7 @@ from config import UNIV_ID_REGEX
 import re
 from cogs import db
 from aiosqlite3 import IntegrityError
+import logging
 
 
 class NetIDForm(discord.ui.Modal):
@@ -75,39 +76,41 @@ class Registration(commands.Cog):
         )
 
         view = discord.ui.View()
-        view.value = None
 
         async def callback(vinter):
-            view.value = vinter.data['values'][0]
-            view.stop()
+            section_id = int(vinter.data['values'][0])
+            query = '''INSERT INTO students (user_id, section_id) 
+                       VALUES (?, ?)
+                       ON CONFLICT(user_id) DO UPDATE
+                       SET section_id = ?
+                    '''
+            await self.bot.db_execute(query, inter.user.id, section_id, section_id)
+
+            err_msg = ''
+
+            for row in sections:
+                role = discord.Object(id=row[3])
+                if row[0] == section_id:
+                    if role not in inter.user.roles:
+                        try:
+                            await inter.user.add_roles(role)
+                        except Exception as err:
+                            err_msg = str(err)
+                else:
+                    if role in inter.user.roles:
+                        try:
+                            await inter.user.remove_roles(role)
+                        except Exception as err:
+                            err_msg = str(err)
+
+            await vinter.response.edit_message(
+                content=err_msg or 'Your section has been successfully linked.',
+                view=None
+            )
 
         select.callback = callback
-
         view.add_item(select)
-
         await inter.response.send_message('\u200b', view=view, ephemeral=True)
-        await view.wait()
-
-        query = '''INSERT INTO students (user_id, section_id) 
-                   VALUES (?, ?)
-                   ON CONFLICT(user_id) DO UPDATE
-                   SET section_id = ?
-                '''
-        await self.bot.db_execute(query, inter.user.id, view.value, view.value)
-
-        role_id = await self.bot.db_fetchone('SELECT role_id FROM sections WHERE id = ?', view.value)
-        role = inter.guild.get_role(role_id[0])
-
-        if role not in inter.user.roles:
-            try:
-                await inter.user.add_roles(role)
-            except (AttributeError, discord.Forbidden):
-                print(f'Role {role.name} could not be added to {inter.user.display_name}')
-
-        await inter.edit_original_response(
-            content='Your section has been successfully linked.',
-            view=None
-        )
 
     @section_cmd.command(name='create')
     @app_commands.checks.has_permissions(administrator=True)
