@@ -6,6 +6,7 @@ import re
 from cogs import db
 from aiosqlite3 import IntegrityError
 import logging
+from config import TA_KEY, TA_ROLE_ID
 
 
 class NetIDForm(discord.ui.Modal):
@@ -43,6 +44,26 @@ class Registration(commands.Cog):
         name='register',
         description='Registers your school ID and section.'
     )
+
+    @app_commands.command(name='give-me-ta')
+    async def ta(self, inter):
+        class Modal(discord.ui.Modal, title='Confirm'):
+            key = discord.ui.TextInput(label='Enter the TA key for this server')
+            async def on_submit(self, minter):
+                if str(self.key) != TA_KEY:
+                    return await minter.response.send_message(
+                        "Incorrect TA key",
+                        ephemeral=True
+                    )
+                role = inter.guild.get_role(TA_ROLE_ID)
+                await inter.user.add_roles(role)
+                await minter.response.send_message(
+                    f":white_check_mark: Gave you the {role.mention} role",
+                    ephemeral=True
+                )
+        modal = Modal()
+        await inter.response.send_modal(modal)
+        
 
     @register_cmd.command(name='netid')
     async def register_netid(self, inter):

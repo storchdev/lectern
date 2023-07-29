@@ -3,10 +3,9 @@ from discord.ext import commands
 from config import TOKEN, DB_FILENAME
 import os
 from cogs.utils import get_emojis
-import logging
+from typing import Literal, Optional
 
-
-# logging.basicConfig(level=logging.DEBUG)
+discord.utils.setup_logging()
 
 if not os.path.exists(DB_FILENAME):
     new = True
@@ -27,6 +26,42 @@ bot = commands.Bot(
 async def setup_hook():
     bot.loop.create_task(startup())
 
+
+@bot.command()
+@commands.guild_only()
+@commands.is_owner()
+async def sync(ctx: commands.Context, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
+    for cmd in ctx.bot.tree.get_commands():
+        cmd.guild_only = True 
+        
+    if not guilds:
+        if spec == "~":
+            synced = await ctx.bot.tree.sync(guild=ctx.guild)
+        elif spec == "*":
+            ctx.bot.tree.copy_global_to(guild=ctx.guild)
+            synced = await ctx.bot.tree.sync(guild=ctx.guild)
+        elif spec == "^":
+            ctx.bot.tree.clear_commands(guild=ctx.guild)
+            await ctx.bot.tree.sync(guild=ctx.guild)
+            synced = []
+        else:
+            synced = await ctx.bot.tree.sync()
+
+        await ctx.send(
+            f"Synced {len(synced)} commands {'globally' if spec is None else 'to the current guild.'}"
+        )
+        return
+
+    ret = 0
+    for guild in guilds:
+        try:
+            await ctx.bot.tree.sync(guild=guild)
+        except discord.HTTPException:
+            pass
+        else:
+            ret += 1
+
+    await ctx.send(f"Synced the tree to {ret}/{len(guilds)}.")
 
 async def startup():
     await bot.wait_until_ready()
