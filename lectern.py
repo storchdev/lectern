@@ -13,12 +13,11 @@ else:
     new = False
     
 
-intents = discord.Intents.default()
-intents.members = True 
+intents = discord.Intents.all()
 
 bot = commands.Bot(
     intents=intents,
-    command_prefix='l '
+    command_prefix='//'
 )
 
 
@@ -67,6 +66,7 @@ async def startup():
     await bot.wait_until_ready()
 
     cogs = (
+        'jishaku',
         'cogs.db',
         'cogs.registration',
         'cogs.polls',
