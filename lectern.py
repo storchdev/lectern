@@ -28,7 +28,7 @@ async def setup_hook():
 
 @bot.command()
 @commands.guild_only()
-@commands.is_owner()
+@commands.has_guild_permissions(administrator=True)
 async def sync(ctx: commands.Context, guilds: commands.Greedy[discord.Object], spec: Optional[Literal["~", "*", "^"]] = None) -> None:
     for cmd in ctx.bot.tree.get_commands():
         cmd.guild_only = True 

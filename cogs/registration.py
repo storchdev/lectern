@@ -40,10 +40,13 @@ class Registration(commands.Cog):
         description='Links or unlinks a course section with a Discord channel.',
         default_permissions=discord.Permissions(8)
     )
+
+    """
     register_cmd = app_commands.Group(
         name='register',
         description='Registers your school ID and section.'
     )
+    """
 
     @app_commands.command(name='give-me-ta')
     async def ta(self, inter):
@@ -65,7 +68,8 @@ class Registration(commands.Cog):
         await inter.response.send_modal(modal)
         
 
-    @register_cmd.command(name='netid')
+    @app_commands.command(name='netid')
+    @app_commands.default_permissions()
     async def register_netid(self, inter):
         """Lets me know your school ID."""
 
@@ -86,11 +90,15 @@ class Registration(commands.Cog):
             ephemeral=True
         )
 
-    @register_cmd.command(name='section')
+    @app_commands.command(name='register')
     async def register_section(self, inter):
         """Lets me know your section."""
 
         sections = await db.fetch_sections(self.bot)
+        if len(sections) == 0:
+            await inter.response.send_message("Sections have not been set yet.", ephemeral=True)
+            return 
+
         select = discord.ui.Select(
             placeholder='Select a section',
             options=[discord.SelectOption(label=row[4], value=row[0]) for row in sections]
@@ -137,6 +145,7 @@ class Registration(commands.Cog):
 
     @section_cmd.command(name='create')
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.default_permissions()
     @app_commands.describe(
         name='The name of the section',
         channel='The Discord channel connected to the section',
@@ -171,6 +180,7 @@ class Registration(commands.Cog):
 
     @section_cmd.command(name='modify')
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.default_permissions()
     @app_commands.describe(
         old_name='The existing name of the section to edit',
         new_name='The new name',
@@ -223,6 +233,7 @@ class Registration(commands.Cog):
 
     @section_cmd.command(name='remove')
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.default_permissions()
     @app_commands.describe(name='The name of the section to remove')
     async def section_remove(self, inter, name: str):
         """For an instructor to remove a section that has already been created."""
@@ -249,6 +260,7 @@ class Registration(commands.Cog):
 
     @section_cmd.command(name='list')
     @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.default_permissions()
     async def section_list(self, inter):
         """Shows all the sections and the students in them."""
 
