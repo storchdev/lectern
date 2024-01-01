@@ -48,7 +48,7 @@ class Registration(commands.Cog):
     )
     """
 
-    @app_commands.command(name='give-me-ta')
+    @app_commands.command(name='get-ta-role')
     async def ta(self, inter):
         class Modal(discord.ui.Modal, title='Confirm'):
             key = discord.ui.TextInput(label='Enter the TA key for this server')
