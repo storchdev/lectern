@@ -1,34 +1,13 @@
 from discord.ext import commands
 from discord import app_commands
 import discord
-from config import UNIV_ID_REGEX
 import re
-from cogs import db
-from aiosqlite3 import IntegrityError
+# from cogs import db
+# from aiosqlite3 import IntegrityError
 import logging
-from config import TA_KEY, TA_ROLE_ID
+from config import TA_KEY
 
-
-class NetIDForm(discord.ui.Modal):
-    univ_id = discord.ui.TextInput(label='Your NetID', style=discord.TextStyle.short)
-
-    def __init__(self, title):
-        super().__init__(title=title)
-        self.inter = None
-
-    async def on_submit(self, inter):
-        univ_id = str(self.univ_id)
-
-        if not re.match(UNIV_ID_REGEX, univ_id):
-            await inter.response.send_message(
-                'Please try again and enter a NetID.',
-                ephemeral=True
-            )
-            return
-
-        self.inter = inter
-        self.stop()
-
+logger = logging.getLogger(__name__)
 
 class Registration(commands.Cog):
 
@@ -58,84 +37,81 @@ class Registration(commands.Cog):
                         "Incorrect TA key",
                         ephemeral=True
                     )
-                role = inter.guild.get_role(TA_ROLE_ID)
-                await inter.user.add_roles(role)
+
+                ta_role = None   
+                for role in inter.guild.roles:
+                    if role.name.startswith("TA"):
+                        ta_role = role
+                        break
+
+                if ta_role is None:
+                    return await minter.response.edit_message(
+                        content='Could not find the TA role. Check with your professors.',
+                        view=None)
+
+                # role = inter.guild.get_role(ta_role_id)
+
+                await inter.user.add_roles(ta_role)
                 await minter.response.send_message(
-                    f":white_check_mark: Gave you the {role.mention} role",
+                    f":white_check_mark: You now have the {role.mention} role",
                     ephemeral=True
                 )
+                logger.info(f'gave the TA role to {inter.user.name}')
         modal = Modal()
         await inter.response.send_modal(modal)
         
-
-    @app_commands.command(name='netid')
-    @app_commands.default_permissions()
-    async def register_netid(self, inter):
-        """Lets me know your school ID."""
-
-        modal = NetIDForm('Link Your University ID')
-        await inter.response.send_modal(modal)
-        await modal.wait()
-
-        univ_id = str(modal.univ_id)
-        query = '''INSERT INTO students (user_id, univ_id) 
-                   VALUES (?, ?)
-                   ON CONFLICT(user_id) DO UPDATE
-                   SET univ_id = ?
-                '''
-        await self.bot.db_execute(query, inter.user.id, univ_id, univ_id)
-
-        await modal.inter.response.send_message(
-            'Your NetID has been successfully linked to your Discord.',
-            ephemeral=True
-        )
-
     @app_commands.command(name='register')
     async def register_section(self, inter):
         """Lets me know your section."""
 
-        sections = await db.fetch_sections(self.bot)
+        sections = []
+        for role in inter.guild.roles:
+            if role.name.startswith("Section"):
+                sections.append((role.id, role.name))
+
         if len(sections) == 0:
-            await inter.response.send_message("Sections have not been set yet.", ephemeral=True)
+            await inter.response.send_message("Sections not found.", ephemeral=True)
             return 
+
+        sections.sort(key=lambda role: role[1])
 
         select = discord.ui.Select(
             placeholder='Select a section',
-            options=[discord.SelectOption(label=row[4], value=row[0]) for row in sections]
+            options=[discord.SelectOption(label=row[1], value=row[0]) for row in sections]
         )
 
         view = discord.ui.View()
 
         async def callback(vinter):
             section_id = int(vinter.data['values'][0])
-            query = '''INSERT INTO students (user_id, section_id) 
-                       VALUES (?, ?)
-                       ON CONFLICT(user_id) DO UPDATE
-                       SET section_id = ?
-                    '''
-            await self.bot.db_execute(query, inter.user.id, section_id, section_id)
+            new_role = inter.guild.get_role(section_id)
+            if new_role in inter.user.roles:
+                await vinter.response.edit_message(
+                    content=f'You already have section role {new_role.name}.',
+                    view=None)
+                return
 
             err_msg = ''
 
             for row in sections:
-                role = inter.guild.get_role(row[3])
+                role = inter.guild.get_role(row[0])
                 if row[0] == section_id:
                     if role not in inter.user.roles:
                         try:
                             await inter.user.add_roles(role)
-                            print(f'added role {role.name}')
+                            logger.info(f'added role {role.name} to {inter.user.name}')
                         except Exception as err:
                             err_msg = str(err)
                 else:
                     if role in inter.user.roles:
                         try:
                             await inter.user.remove_roles(role)
-                            print(f'removed role {role.name}')
+                            logger.info(f'removed role {role.name} from {inter.user.name}')
                         except Exception as err:
                             err_msg = str(err)
 
             await vinter.response.edit_message(
-                content=err_msg or 'Your section has been successfully linked.',
+                content=err_msg or f'Your section role has been successfully set to {new_role.name}.',
                 view=None
             )
 
@@ -289,7 +265,6 @@ class Registration(commands.Cog):
             embed.add_field(name=name, value=value)
 
         await inter.response.send_message(embed=embed, ephemeral=True)
-
 
 async def setup(bot):
     await bot.add_cog(Registration(bot))

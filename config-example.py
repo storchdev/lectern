@@ -6,5 +6,6 @@ DEFAULT_POINTS = 1
 DB_FILENAME = 'main.db'
 
 # allow TAs to set role themselves
-TA_ROLE_ID = 12345 # a number
+# TA role must start with 'TA'
+# TA_ROLE_ID = 12345 # a number
 TA_KEY = '' # a string

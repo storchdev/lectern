@@ -1,5 +1,5 @@
 from discord.ext import commands
-import aiosqlite3
+import asqlite
 from time import time
 import random 
 from config import DB_FILENAME

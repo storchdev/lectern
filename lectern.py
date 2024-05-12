@@ -4,14 +4,11 @@ from config import TOKEN, DB_FILENAME
 import os
 from cogs.utils import get_emojis
 from typing import Literal, Optional
+import logging
 
 discord.utils.setup_logging()
 
-if not os.path.exists(DB_FILENAME):
-    new = True
-else:
-    new = False
-    
+logger = logging.getLogger(__name__)
 
 intents = discord.Intents.all()
 
@@ -20,11 +17,9 @@ bot = commands.Bot(
     command_prefix='//'
 )
 
-
 @bot.event
 async def setup_hook():
     bot.loop.create_task(startup())
-
 
 @bot.command()
 @commands.guild_only()
@@ -66,31 +61,46 @@ async def startup():
     await bot.wait_until_ready()
 
     cogs = (
-        'jishaku',
-        'cogs.db',
         'cogs.registration',
-        'cogs.polls',
-        'cogs.grading',
-        'cogs.sessions'
+        # 'cogs.db',
+        # 'cogs.polls',
+        # 'cogs.grading',
+        # 'cogs.sessions'
+        'jishaku'
     )
     for cog in cogs:
         await bot.load_extension(cog)
-        print(f'Loaded {cog}')
+        logger.info(f'Loaded {cog}')
 
-    if new:
+    if args.sync:
         await bot.tree.sync()
+        '''
         guild = bot.guilds[0]
         roles = [guild.self_role]
         for image in os.listdir('assets'):
             with open(f'assets/{image}', 'rb') as f:
                 await guild.create_custom_emoji(name=image[:-4], image=f.read(), roles=roles)
+        '''
 
-    get_emojis(bot)
+    # get_emojis(bot)
 
-    print('----------------------------------------------------')
-    print(f'{bot.user} is ready.')
-    print(f'{len(bot.guilds)} GUILDS | {len(bot.users)} USERS')
+    logger.info(f'{bot.user} is ready.')
+    logger.info(f'{len(bot.guilds)} GUILDS | {len(bot.users)} USERS')
 
 
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='Lectern bot')
+    parser.add_argument('-v', action='count', help='generate trace file')
+    parser.add_argument('--sync', action='store_true', help='sync commands')
+
+    args = parser.parse_args()
+
+    if args.v:
+        logging.basicConfig(level=logging.DEBUG)
+    else: 
+        logging.basicConfig(level=logging.INFO)
+
+    logging.debug(args)
+
     bot.run(TOKEN)
