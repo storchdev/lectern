@@ -4,8 +4,11 @@ import discord
 import time
 import asyncio
 import logging
-# from cogs import db
-import re
+# import re
+
+from config import LOG_DIR
+from datetime import datetime
+from pathlib import Path
 
 import typing
 import traceback
@@ -28,6 +31,7 @@ class PollQuestion:
         self.start_time = time.time()
         self.uc_id = get_unique_uc_id(inter) 
         self.open = True
+        self.saved = False
 
     def add_answer(self, sid, answer):
         self.responses[sid] = answer
@@ -38,6 +42,27 @@ class PollQuestion:
 
     def isOpen(self):
         return self.open
+
+    def save(self, dstdir):
+        path = Path(dstdir)
+        if not path.is_dir():
+            return False
+        if self.open: 
+            return False
+        if self.saved: 
+            return False
+        dt_local = datetime.fromtimestamp(self.start_time).astimezone()
+        time_str = dt_local.strftime("%Y%m%d-%H%M%S-")
+        filename = time_str + str(self.interaction.channel_id)
+        file = path / filename
+
+        time_str = dt_local.strftime("%Y-%m-%d %H:%M:%S")
+        data = f'Time: {time_str}\n\nQuestion: {self.question}\n\nResponses:\n'
+        for k,v in self.responses.items():
+            data += f'{k},{v}\n'
+        file.write_text(data)
+        self.saved = True
+        return True
 
 async def display_results(inter, poll, keepprivate):
 
@@ -369,6 +394,17 @@ class Polls(commands.Cog):
             return
         last.end()
         await inter.response.send_message('The last poll has been closed.', ephemeral=True)
+
+    @poll_cmd.command(name="save")
+    @app_commands.default_permissions()
+    @app_commands.checks.has_permissions(administrator=True)
+    async def save(self, inter):
+        """Close the last poll"""
+        count = 0
+        for p in [x for x in self.polls if (x.interaction.user.id == inter.user.id 
+            and x.interaction.channel_id == inter.channel_id and not x.saved)] :
+            count += p.save(LOG_DIR)
+        await inter.response.send_message(f'{count} poll(s) saved.', ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Polls(bot))
