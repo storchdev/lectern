@@ -3,264 +3,368 @@ from discord import app_commands
 import discord
 import time
 import asyncio
-from cogs import db
+import logging
+# from cogs import db
 import re
-from config import DEFAULT_POINTS
 
+import typing
+import traceback
+from discord.ui.select import BaseSelect
 
-class QuestionForm(discord.ui.Modal, title='What are you asking?'):
-    question = discord.ui.TextInput(label='Type the question', style=discord.TextStyle.long, max_length=1024)
+logger = logging.getLogger(__name__)
+
+DEFAULT_QUESTION = "Lecture 1.1 slide 10"
+
+def     get_unique_ctx_id(inter):
+    return f"{inter.user.id}.{inter.channel_id}.{inter.guild_id}"
+
+class PollQuestion:
+
+    def __init__(self, question, typ, inter):
+        self.question = question
+        self.typ = typ
+        self.interaction = inter
+        self.responses = {}
+        self.start_time = time.time()
+        self.ctx_id = get_unique_ctx_id(inter) 
+        self.open = True
+
+    def add_answer(self, sid, answer):
+        self.responses[sid] = answer
+        logger.info(f"User {sid}'s answer is {answer}")
+
+    def end(self):
+        self.open = False
+
+    def isOpen(self):
+        return self.open
+
+async def display_results(inter, poll):
+
+    total = len(poll.responses)
+    if total == 0: 
+        await inter.response.send_message('The poll did not have any responses.',
+            ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="Poll results",
+        description=poll.question,
+        color=0x2F3136
+    ); 
+
+    answerdict = {}
+
+    for k, v in poll.responses.items():
+
+        answer = v.upper()
+
+        if answer in answerdict:
+            answerdict[answer] += 1
+        else:
+            answerdict[answer] = 1
+        
+    if poll.typ: 
+        answers = [ (k, v) for k, v in sorted(answerdict.items(), key=lambda item: item[1], reverse=True)]
+    else:
+        answers = [ (k, v) for k, v in sorted(answerdict.items(), key=lambda item: item[0], reverse=True)]
+
+    embed.clear_fields()
+
+    full_bar = "*"*15
+    n = min(len(answers), 10)
+    for i in range(n):
+        choice = answers[i][0]
+        p = round(answers[i][1]/total*100)
+        # bar = bar_from_p(bot, p)
+        e = (p // 10) + 1 
+        bar = full_bar[0:e]
+
+        embed.add_field(
+            name=choice,
+            value=f'`{bar}`  **{p}%**',
+            inline=False
+        )
+    
+    embed.set_footer(text=f'{total} response(s)')
+
+    await inter.response.send_message(embed=embed, ephemeral=True)
+
+class QuestionForm(discord.ui.Modal, title='What is the question you are asking?'):
+    question = discord.ui.TextInput(label='Type the question', 
+            style=discord.TextStyle.long, 
+            max_length=1024)
+
+    def __init__(self, default_question):
+        super().__init__()
+        self.question.default = default_question
 
     async def on_submit(self, inter):
         await inter.response.send_message(f'Created poll in {inter.channel.mention}', ephemeral=True)
         self.stop()
 
+class AnswerForm(discord.ui.Modal, title="Answer"):
+    answer = discord.ui.TextInput(label='Enter your answer', 
+             style=discord.TextStyle.short,
+             max_length=40)
 
-class AnswerForm(discord.ui.Modal):
-    answer = discord.ui.TextInput(label='Type your answer', style=discord.TextStyle.short)
-
-    def __init__(self, title, *, poll_id):
-        super().__init__(title=title)
-        self.poll_id = poll_id
+    def __init__(self, poll):
+        super().__init__()
+        self.poll = poll
 
     async def on_submit(self, inter):
         answer = str(self.answer)
-        await db.upsert_poll_response(inter.client, answer, inter.user.id, self.poll_id)
+        # await db.upsert_poll_response(inter.client, answer, inter.user.id, self.poll_id)
+        self.poll.add_answer(inter.user.id, answer)
         await inter.response.send_message(f'Your answer:\n`{answer}`', ephemeral=True)
+        self.stop()
 
+# Based on examples on 
+# https://fallendeity.github.io/discord.py-masterclass/views
+class PollView(discord.ui.View):
+    interaction: discord.Interaction | None = None
+    message: discord.Message | None = None
+
+    def __init__(self, user: discord.User | discord.Member, poll, timeout: float = 600.0):
+        super().__init__(timeout=timeout)
+        self.user = user
+        self.poll = poll
+
+    # make sure that the view only processes interactions from the user who invoked the command
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "You cannot interact with this view.", ephemeral=True
+            )
+            return False
+        # update the interaction attribute when a valid interaction is received
+        """
+        self.interaction = interaction
+        return True
+
+    # to handle errors we first notify the user that an error has occurred and then disable all components
+
+    def _disable_all(self) -> None:
+        # disable all components
+        # so components that can be disabled are buttons and select menus
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) or isinstance(item, BaseSelect):
+                item.disabled = True
+        self.poll.end()
+
+    # after disabling all components we need to edit the message with the new view
+    # now when editing the message there are two scenarios:
+    # 1. the view was never interacted with i.e in case of plain timeout here message attribute will come in handy
+    # 2. the view was interacted with and the interaction was processed and we have the latest interaction stored in the interaction attribute
+    async def _edit(self, **kwargs: typing.Any) -> None:
+        if self.interaction is None and self.message is not None:
+            # if the view was never interacted with and the message attribute is not None, edit the message
+            await self.message.edit(**kwargs)
+        elif self.interaction is not None:
+            try:
+                # if not already responded to, respond to the interaction
+                await self.interaction.response.edit_message(**kwargs)
+            except discord.InteractionResponded:
+                # if already responded to, edit the response
+                await self.interaction.edit_original_response(**kwargs)
+
+    # async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[PollView]) -> None:
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
+        tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        message = f"An error occurred while processing the interaction for {str(item)}:\n```py\n{tb}\n```"
+        # disable all components
+        self._disable_all()
+        # edit the message with the error message
+        await self._edit(content=message, view=self)
+        # stop the view
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        # disable all components
+        self._disable_all()
+        # edit the message with the new view
+        await self._edit(content="Time out", view=self)
+
+    async def on_stop_button(self) -> None:
+        # disable all components
+        self._disable_all()
+        # edit the message with the new view
+        await self._edit(content="Poll was stopped", view=self)
+        self.stop()
 
 class Polls(commands.Cog):
     poll_cmd = app_commands.Group(
         name='poll',
-        description='Parent command for creating multiple choice and written polls'
+        description='Parent command for creating multiple choices and short answer polls'
     )
 
     def __init__(self, bot):
         self.bot = bot
-        self.saved_id = None
-        self.ctx_menu = app_commands.ContextMenu(
-            name='Reopen this poll',
-            callback=self.reopen
-        )
-        self.bot.tree.add_command(self.ctx_menu)
+        self.polls = []
+        # self.bot.tree.add_command(self.ctx_menu)
+
+    def find_last_poll(self, inter):
+        if len(self.polls) > 100:
+            self.polls = self.polls[10:]
+        ctx_id = get_unique_ctx_id(inter) 
+        logger.info(f"Search last poll from {ctx_id}")
+        for p in reversed(self.polls):
+            if p.ctx_id == ctx_id:
+                return p
+        return None
 
     async def cog_unload(self):
-        self.bot.tree.remove_command(self.ctx_menu.name, type=self.ctx_menu.type)
+        pass
+        # self.bot.tree.remove_command(self.ctx_menu.name, type=self.ctx_menu.type)
 
-    async def create_poll(self, inter, typ, question, duration, points):
-        poll_id = await db.insert_poll(
-            self.bot,
-            question,
-            typ=0,
-            duration=duration,
-            poll_id=self.saved_id,
-            points=points
-        )
-        self.saved_id = None
+    async def create_poll(self, inter, typ, question):
 
-        end_time = int(time.time() + duration)
-        view = discord.ui.View(timeout=None)
+        poll = PollQuestion(question, typ, inter)
+
+        self.polls.append(poll)
+
+        # view = discord.ui.View(timeout=None)
+        view = PollView(inter.user, poll, 600)
+
+        async def callback(button_inter):
+            choice = button_inter.data['custom_id']
+            poll.add_answer(button_inter.user.id, choice)
+            await button_inter.response.send_message(f'You chose **{choice}**', ephemeral=True)
 
         if typ == 0:
             for letter in 'ABCDE':
                 button = discord.ui.Button(label=letter, custom_id=letter, style=discord.ButtonStyle.blurple)
-
-                async def callback(button_inter):
-                    choice = button_inter.data['custom_id']
-
-                    await db.upsert_poll_response(self.bot, choice, button_inter.user.id, poll_id)
-                    await button_inter.response.send_message(f'You chose **{choice}**', ephemeral=True)
-
                 button.callback = callback
                 view.add_item(button)
 
-            title = 'Multiple Choice Poll'
+            title = 'Multiple Choices Poll'
         else:
             btn_answer = discord.ui.Button(
                 label='Enter your answer',
                 emoji='\U0001f4ac',
                 style=discord.ButtonStyle.blurple
             )
-            modal = AnswerForm(question, poll_id=poll_id)
 
             async def answer_callback(answer_inter):
+                modal = AnswerForm(poll)
                 await answer_inter.response.send_modal(modal)
 
             btn_answer.callback = answer_callback
-            title = 'Written Answer Poll'
+            title = 'Short Answer Poll'
             view.add_item(btn_answer)
 
+        # stop button
+        async def stop_callback(stop_inter):
+            if not stop_inter.user.guild_permissions.administrator:
+                await stop_inter.response.send_message('No privilege.', ephemeral=True)
+                return
+            await view.on_stop_button()
+
         btn_stop = discord.ui.Button(
-            label='\u200b',
+            label='Stop',
             emoji='\U0001f6d1',
             style=discord.ButtonStyle.red,
             row=1
         )
-        btn_addtime = discord.ui.Button(
-            label='+',
-            emoji='\U000023f2',
-            style=discord.ButtonStyle.green,
-            row=1
-        )
-
-        manualstop = False
-
-        async def stop_callback(stop_inter):
-            nonlocal manualstop
-
-            if not stop_inter.user.guild_permissions.administrator:
-                return
-
-            manualstop = True
-
-            stop_task.cancel()
-            view.stop()
-            await stop_inter.response.send_message(
-                'Poll stopped. Reopen or grade it by clicking the `...` on the poll message, and going to `Apps`',
-                ephemeral=True
-            )
 
         btn_stop.callback = stop_callback
 
-        async def addtime_callback(addtime_inter):
-            nonlocal stop_task
-            nonlocal end_time
-
-            if not addtime_inter.user.guild_permissions.administrator:
-                return
-
-            stop_task.cancel()
-            end_time += 20
-            stop_task = self.bot.loop.create_task(stop(end_time))
-            embed.set_field_at(0, name='Expires', value=f'<t:{end_time}:R>')
-
-            await m.edit(embed=embed)
-            await addtime_inter.response.send_message('20 seconds added', ephemeral=True)
-
-        btn_addtime.callback = addtime_callback
-
         view.add_item(btn_stop)
-        view.add_item(btn_addtime)
+
+        # check responses
+        async def check_callback(cb_inter):
+            if not cb_inter.user.guild_permissions.administrator:
+                await cb_inter.response.send_message('No privilege.', ephemeral=True)
+                return
+            await cb_inter.response.send_message(f"{str(len(poll.responses))} response(s).", ephemeral=True)
+            return 
+
+        btn_check = discord.ui.Button(
+            label='Check Progress',
+            emoji=None,
+            style=discord.ButtonStyle.blurple,
+            row=1
+        )
+        btn_check.callback = check_callback
+        view.add_item(btn_check)
 
         embed = discord.Embed(
             title=title,
             description=question,
             color=0x2F3136
-        ).add_field(
-            name='Expires',
-            value=f'<t:{end_time}:R>'
-        ).set_author(
-            name=f'ID: {poll_id}'
-        )
+        ); 
+        # .set_author( name=f'ID: {poll_id}')
 
-        m = await inter.channel.send(embed=embed, view=view)
+        view.message = await inter.channel.send(embed=embed, view=view)
 
-        async def stop(end):
-            await asyncio.sleep(end - time.time())
-            view.stop()
-
-        stop_task = self.bot.loop.create_task(stop(end_time))
-
-        await view.wait()
-
-        if not manualstop:
-            await inter.followup.send(
-                'Poll stopped. Reopen or grade it by clicking the `...` on the poll message, and going to `Apps`',
-                ephemeral=True
-            )
-
-        embed.set_field_at(0, name='Expired', value='Waiting to be graded...')
-        for button in view.children:
-            button.disabled = True
-
-        await m.edit(embed=embed, view=view)
-
+    @poll_cmd.command(name='multiplechoices')
     @app_commands.default_permissions()
     @app_commands.checks.has_permissions(administrator=True)
-    async def reopen(self, inter, message: discord.Message):
-        poll_id = None
-
-        if message.author.id == self.bot.user.id and message.embeds and message.embeds[0].author:
-            embed = message.embeds[0]
-            poll_id = re.findall(r'ID: (\d+)', embed.author.name)
-
-        if not poll_id:
-            return await inter.response.send_message(
-                'This message is not a poll.',
-                ephemeral=True
-            )
-
-        poll_id = int(poll_id[0])
-        query = 'SELECT answers, question, type, duration FROM polls WHERE id = ?'
-        row = await self.bot.db_fetchone(query, poll_id)
-
-        if row[0] is not None:
-            return await inter.response.send_message(
-                'You have already graded this poll.',
-                ephemeral=True
-            )
-
-        await inter.response.send_message(
-            f'Reopening poll #{poll_id}',
-            ephemeral=True
-        )
-        self.saved_id = poll_id
-        question = row[1]
-        typ = row[2]
-        duration = row[3]
-
-        query = 'DELETE FROM polls WHERE id = ?'
-        await self.bot.db_execute(query, poll_id)
-        await self.create_poll(inter, typ, question, duration)
-
-    @poll_cmd.command(name='choice')
-    @app_commands.default_permissions()
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        duration='The time (in seconds) before the poll expires'
-    )
-    async def choice(self, inter, duration: int = 60, points: int = DEFAULT_POINTS):
+    async def multiplechoices(self, inter):
         """Creates a multiple-choice poll."""
 
-        query = 'SELECT * FROM sections WHERE channel_id = ?'
-        exists = await self.bot.db_fetchone(query, inter.channel.id)
-        if not exists:
-            await inter.response.send_message(
-                'This channel is not linked to a section. Do `/section create` to create a new section.',
-                ephemeral=True
-            )
-            return
-
-        modal = QuestionForm()
+        last = self.find_last_poll(inter)
+        if last: 
+            if last.isOpen():
+                await inter.response.send_message('The previous poll is still open.', ephemeral=True)
+                return
+            question = last.question
+        else:
+            question = DEFAULT_QUESTION
+        modal = QuestionForm(question)
         await inter.response.send_modal(modal)
         await modal.wait()
         question = str(modal.question)
-        await self.create_poll(inter, 0, question, duration, points)
+        await self.create_poll(inter, 0, question)
 
-    @poll_cmd.command()
+    @poll_cmd.command(name="shortanswer")
     @app_commands.default_permissions()
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        duration='The time (in seconds) before the poll expires'
-    )
-    async def written(self, inter, duration: int = 60, points: int = DEFAULT_POINTS):
+    async def shortanswer(self, inter):
         """Creates a poll that requires a self-written response."""
 
-        query = 'SELECT channel_id FROM sections WHERE instructor_id = ?'
-        channel_id = await self.bot.db_fetchone(query, inter.user.id)
-        if not channel_id:
-            await inter.response.send_message(
-                'You have not created a section yet. Do `/section create` to create one.',
-                ephemeral=True
-            )
-            return
-
-        modal = QuestionForm()
+        last = self.find_last_poll(inter)
+        if last: 
+            if last.isOpen():
+                await inter.response.send_message('The previous poll is still open.', ephemeral=True)
+                return
+            question = last.question
+        else:
+            question = DEFAULT_QUESTION
+        modal = QuestionForm(question)
         await inter.response.send_modal(modal)
         await modal.wait()
         question = str(modal.question)
-        await self.create_poll(inter, 1, question, duration, points)
+        await self.create_poll(inter, 1, question)
 
+    @poll_cmd.command(name="results")
+    @app_commands.default_permissions()
+    @app_commands.checks.has_permissions(administrator=True)
+    async def results(self, inter):
+        """Show the result of the last poll"""
+        last = self.find_last_poll(inter)
+        if last is None:
+            await inter.response.send_message('Did not find a poll.', ephemeral=True)
+            return
+        if last.isOpen():
+            await inter.response.send_message('The last poll is still open.', ephemeral=True)
+            return
+
+        await display_results(inter, last) 
+        # await inter.response.send_message('Not supported yet.', ephemeral=True)
+
+    @poll_cmd.command(name="close")
+    @app_commands.default_permissions()
+    @app_commands.checks.has_permissions(administrator=True)
+    async def close(self, inter):
+        """Close the last poll"""
+        last = self.find_last_poll(inter)
+        if last is None:
+            await inter.response.send_message('Did not find a poll.', ephemeral=True)
+            return
+        last.end()
+        await inter.response.send_message('The last toll has been closed.', ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Polls(bot))

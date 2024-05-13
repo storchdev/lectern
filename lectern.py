@@ -62,8 +62,8 @@ async def startup():
 
     cogs = (
         'cogs.registration',
+        'cogs.polls',
         # 'cogs.db',
-        # 'cogs.polls',
         # 'cogs.grading',
         # 'cogs.sessions'
         'jishaku'
