@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_QUESTION = "Lecture 1.1 slide 10"
 
-def     get_unique_ctx_id(inter):
-    return f"{inter.user.id}.{inter.channel_id}.{inter.guild_id}"
+def     get_unique_uc_id(inter):
+    return f"{inter.user.id}.{inter.channel_id}" # .{inter.guild_id}"
 
 class PollQuestion:
 
@@ -26,7 +26,7 @@ class PollQuestion:
         self.interaction = inter
         self.responses = {}
         self.start_time = time.time()
-        self.ctx_id = get_unique_ctx_id(inter) 
+        self.uc_id = get_unique_uc_id(inter) 
         self.open = True
 
     def add_answer(self, sid, answer):
@@ -39,7 +39,7 @@ class PollQuestion:
     def isOpen(self):
         return self.open
 
-async def display_results(inter, poll):
+async def display_results(inter, poll, keepprivate):
 
     total = len(poll.responses)
     if total == 0: 
@@ -71,7 +71,7 @@ async def display_results(inter, poll):
 
     embed.clear_fields()
 
-    full_bar = "*"*15
+    full_bar = "\u2588"*12
     n = min(len(answers), 10)
     for i in range(n):
         choice = answers[i][0]
@@ -88,7 +88,8 @@ async def display_results(inter, poll):
     
     embed.set_footer(text=f'{total} response(s)')
 
-    await inter.response.send_message(embed=embed, ephemeral=True)
+    await inter.response.send_message(embed=embed, ephemeral=keepprivate)
+    # await inter.response.send_message(embed=embed)
 
 class QuestionForm(discord.ui.Modal, title='What is the question you are asking?'):
     question = discord.ui.TextInput(label='Type the question', 
@@ -207,10 +208,10 @@ class Polls(commands.Cog):
     def find_last_poll(self, inter):
         if len(self.polls) > 100:
             self.polls = self.polls[10:]
-        ctx_id = get_unique_ctx_id(inter) 
-        logger.info(f"Search last poll from {ctx_id}")
+        uc_id = get_unique_uc_id(inter) 
+        logger.info(f"Search last poll from {uc_id}")
         for p in reversed(self.polls):
-            if p.ctx_id == ctx_id:
+            if p.uc_id == uc_id:
                 return p
         return None
 
@@ -341,7 +342,10 @@ class Polls(commands.Cog):
     @poll_cmd.command(name="results")
     @app_commands.default_permissions()
     @app_commands.checks.has_permissions(administrator=True)
-    async def results(self, inter):
+    @app_commands.describe(
+        keepprivate = 'do not send the results to everyone.'
+    )
+    async def results(self, inter, keepprivate: bool = False):
         """Show the result of the last poll"""
         last = self.find_last_poll(inter)
         if last is None:
@@ -351,7 +355,7 @@ class Polls(commands.Cog):
             await inter.response.send_message('The last poll is still open.', ephemeral=True)
             return
 
-        await display_results(inter, last) 
+        await display_results(inter, last, keepprivate) 
         # await inter.response.send_message('Not supported yet.', ephemeral=True)
 
     @poll_cmd.command(name="close")
@@ -364,7 +368,7 @@ class Polls(commands.Cog):
             await inter.response.send_message('Did not find a poll.', ephemeral=True)
             return
         last.end()
-        await inter.response.send_message('The last toll has been closed.', ephemeral=True)
+        await inter.response.send_message('The last poll has been closed.', ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Polls(bot))
