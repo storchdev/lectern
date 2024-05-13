@@ -14,13 +14,12 @@ class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    """
     section_cmd = app_commands.Group(
         name='section',
         description='Links or unlinks a course section with a Discord channel.',
         default_permissions=discord.Permissions(8)
     )
-
-    """
     register_cmd = app_commands.Group(
         name='register',
         description='Registers your school ID and section.'
@@ -119,6 +118,7 @@ class Registration(commands.Cog):
         view.add_item(select)
         await inter.response.send_message('\u200b', view=view, ephemeral=True)
 
+    '''
     @section_cmd.command(name='create')
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.default_permissions()
@@ -265,6 +265,7 @@ class Registration(commands.Cog):
             embed.add_field(name=name, value=value)
 
         await inter.response.send_message(embed=embed, ephemeral=True)
+    '''
 
 async def setup(bot):
     await bot.add_cog(Registration(bot))
