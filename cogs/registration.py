@@ -1,13 +1,86 @@
 from discord.ext import commands
 from discord import app_commands
 import discord
-import re
+import typing
 # from cogs import db
 # from aiosqlite3 import IntegrityError
 import logging
 from config import TA_KEY
 
 logger = logging.getLogger(__name__)
+
+class RegistrationView(discord.ui.View):
+    message: discord.Message | None = None
+
+    def __init__(self, user: discord.User | discord.Member):
+        super().__init__(timeout=600)
+        self.user = user
+
+    # make sure that the view only processes interactions from the user who invoked the command
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message(
+                "You cannot interact with this view.", ephemeral=True
+            )
+            return False
+        return True
+
+    def _disable_all(self) -> None:
+        for item in self.children:
+            if isinstance(item, discord.ui.Button) or isinstance(item, BaseSelect):
+                item.disabled = True
+
+    async def _edit(self, **kwargs: typing.Any) -> None:
+        if self.message is not None:
+            await self.message.edit(**kwargs)
+
+    # async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[PollView]) -> None:
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
+        tb = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        message = f"An error occurred while processing the interaction for {str(item)}:\n```py\n{tb}\n```"
+        # disable all components
+        self._disable_all()
+        await self._edit(content=message, view=self)
+        # stop the view
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        # disable all components
+        self._disable_all()
+        # edit the message with the new view
+        await self._edit(content="Timed out", view=self)
+
+class TAModal(discord.ui.Modal, title='Verification'):
+
+    key = discord.ui.TextInput(label='Enter the TA key for this server')
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    async def on_submit(self, inter):
+        if str(self.key) != TA_KEY:
+            return await inter.response.send_message(
+                "Incorrect TA key",
+                ephemeral=True
+            )
+
+        ta_role = None   
+        for role in inter.guild.roles:
+            if role.name.startswith("TA"):
+                ta_role = role
+                break
+
+        if ta_role is None:
+            return await inter.response.edit_message(
+                content='Could not find the TA role. Check with your professors.',
+                view=None)
+
+        await inter.user.add_roles(ta_role)
+        await inter.response.send_message(
+            f":white_check_mark: You now have the {role.mention} role",
+            ephemeral=True
+        )
+        logger.info(f'gave the TA role to {inter.user.name}')
 
 class Registration(commands.Cog):
 
@@ -28,35 +101,7 @@ class Registration(commands.Cog):
 
     @app_commands.command(name='get-ta-role')
     async def ta(self, inter):
-        class Modal(discord.ui.Modal, title='Confirm'):
-            key = discord.ui.TextInput(label='Enter the TA key for this server')
-            async def on_submit(self, minter):
-                if str(self.key) != TA_KEY:
-                    return await minter.response.send_message(
-                        "Incorrect TA key",
-                        ephemeral=True
-                    )
-
-                ta_role = None   
-                for role in inter.guild.roles:
-                    if role.name.startswith("TA"):
-                        ta_role = role
-                        break
-
-                if ta_role is None:
-                    return await minter.response.edit_message(
-                        content='Could not find the TA role. Check with your professors.',
-                        view=None)
-
-                # role = inter.guild.get_role(ta_role_id)
-
-                await inter.user.add_roles(ta_role)
-                await minter.response.send_message(
-                    f":white_check_mark: You now have the {role.mention} role",
-                    ephemeral=True
-                )
-                logger.info(f'gave the TA role to {inter.user.name}')
-        modal = Modal()
+        modal = TAModal()
         await inter.response.send_modal(modal)
         
     @app_commands.command(name='register')
@@ -79,7 +124,7 @@ class Registration(commands.Cog):
             options=[discord.SelectOption(label=row[1], value=row[0]) for row in sections]
         )
 
-        view = discord.ui.View()
+        view = RegistrationView(inter.user)
 
         async def callback(vinter):
             section_id = int(vinter.data['values'][0])
@@ -116,7 +161,7 @@ class Registration(commands.Cog):
 
         select.callback = callback
         view.add_item(select)
-        await inter.response.send_message('\u200b', view=view, ephemeral=True)
+        view.message = await inter.response.send_message('\u200b', view=view, ephemeral=True)
 
     '''
     @section_cmd.command(name='create')
