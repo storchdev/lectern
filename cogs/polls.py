@@ -29,6 +29,7 @@ class PollQuestion:
         self.interaction = inter
         self.responses = {}
         self.start_time = time.time()
+        self.end_time = None
         self.uc_id = get_unique_uc_id(inter) 
         self.open = True
         self.saved = False
@@ -38,10 +39,19 @@ class PollQuestion:
         logger.info(f"User {sid}'s answer is {answer}")
 
     def end(self):
+        self.end_time = time.time()
         self.open = False
 
     def isOpen(self):
         return self.open
+
+    def get_status(self):
+        end_time = self.end_time or time.time()
+        duration = round(end_time - self.start_time)
+        minutes = duration // 60
+        seconds = duration % 60
+        n = len(self.responses)
+        return f"{minutes}:{seconds:02}, {n} response(s)"
 
     def save(self, dstfile):
         """append the poll to dstfile"""
@@ -120,12 +130,17 @@ class QuestionForm(discord.ui.Modal, title='What is the question you are asking?
             max_length=1024)
 
     def __init__(self, default_question):
-        super().__init__()
+        super().__init__(timeout=600)
         self.question.default = default_question
 
     async def on_submit(self, inter):
         await inter.response.send_message(f'Created poll in {inter.channel.mention}', ephemeral=True)
+        question = str(self.question)
         self.stop()
+        await self.Polls.create_poll(self.inter, self.typ, question)
+
+    async def on_timeout(self):
+        logger.debug("Answer form timeout")
 
 class AnswerForm(discord.ui.Modal, title="Answer"):
     answer = discord.ui.TextInput(label='Enter your answer', 
@@ -133,15 +148,21 @@ class AnswerForm(discord.ui.Modal, title="Answer"):
              max_length=40)
 
     def __init__(self, poll):
-        super().__init__()
+        super().__init__(timeout=600)
         self.poll = poll
 
     async def on_submit(self, inter):
         answer = str(self.answer)
         # await db.upsert_poll_response(inter.client, answer, inter.user.id, self.poll_id)
-        self.poll.add_answer(inter.user.id, answer)
-        await inter.response.send_message(f'Your answer:\n`{answer}`', ephemeral=True)
+        if self.poll.isOpen():
+            self.poll.add_answer(inter.user.id, answer)
+            await inter.response.send_message(f'Your answer:\n`{answer}`', ephemeral=True)
+        else:
+            await inter.response.send_message('Poll has been closed.', ephemeral=True)
         self.stop()
+
+    async def on_timeout(self):
+        logger.debug("Question form timeout")
 
 # Based on examples on 
 # https://fallendeity.github.io/discord.py-masterclass/views
@@ -163,8 +184,8 @@ class PollView(discord.ui.View):
             )
             return False
         # update the interaction attribute when a valid interaction is received
-        """
         self.interaction = interaction
+        """
         return True
 
     # to handle errors we first notify the user that an error has occurred and then disable all components
@@ -179,12 +200,11 @@ class PollView(discord.ui.View):
 
     # after disabling all components we need to edit the message with the new view
     # now when editing the message there are two scenarios:
-    # 1. the view was never interacted with i.e in case of plain timeout here message attribute will come in handy
-    # 2. the view was interacted with and the interaction was processed and we have the latest interaction stored in the interaction attribute
     async def _edit(self, **kwargs: typing.Any) -> None:
-        if self.interaction is None and self.message is not None:
-            # if the view was never interacted with and the message attribute is not None, edit the message
+        if self.message is not None:
             await self.message.edit(**kwargs)
+        """
+        if self.interaction is None and self.message is not None:
         elif self.interaction is not None:
             try:
                 # if not already responded to, respond to the interaction
@@ -192,6 +212,7 @@ class PollView(discord.ui.View):
             except discord.InteractionResponded:
                 # if already responded to, edit the response
                 await self.interaction.edit_original_response(**kwargs)
+        """
 
     # async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[PollView]) -> None:
     async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
@@ -199,7 +220,6 @@ class PollView(discord.ui.View):
         message = f"An error occurred while processing the interaction for {str(item)}:\n```py\n{tb}\n```"
         # disable all components
         self._disable_all()
-        # edit the message with the error message
         await self._edit(content=message, view=self)
         # stop the view
         self.stop()
@@ -208,14 +228,25 @@ class PollView(discord.ui.View):
         # disable all components
         self._disable_all()
         # edit the message with the new view
-        await self._edit(content="Time out", view=self)
+        await self._edit(content="Timed out", view=self)
 
-    async def on_stop_button(self) -> None:
+    async def on_stop_button(self, inter: discord.Interaction) -> None:
         # disable all components
         self._disable_all()
         # edit the message with the new view
-        await self._edit(content="Poll was stopped", view=self)
+        # await self._edit(content="Poll is closed.", view=self)
+        # await inter.response.send_message('No privilege.', ephemeral=True)
+        status = ""
+        if self.poll:
+            status = "\n" + self.poll.get_status() 
+        await inter.response.edit_message(content=f"Poll is closed.{status}", view=self)
         self.stop()
+
+    async def update_status(self, inter: discord.Interaction) -> None:
+        status = "No poll was found."
+        if self.poll:
+            status = self.poll.get_status()
+        await inter.response.edit_message(content=status, view=self)
 
 class Polls(commands.Cog):
     poll_cmd = app_commands.Group(
@@ -283,7 +314,7 @@ class Polls(commands.Cog):
             if not stop_inter.user.guild_permissions.administrator:
                 await stop_inter.response.send_message('No privilege.', ephemeral=True)
                 return
-            await view.on_stop_button()
+            await view.on_stop_button(stop_inter)
 
         btn_stop = discord.ui.Button(
             label='Stop',
@@ -301,8 +332,7 @@ class Polls(commands.Cog):
             if not cb_inter.user.guild_permissions.administrator:
                 await cb_inter.response.send_message('No privilege.', ephemeral=True)
                 return
-            await cb_inter.response.send_message(f"{str(len(poll.responses))} response(s).", ephemeral=True)
-            return 
+            await view.update_status(cb_inter) 
 
         btn_check = discord.ui.Button(
             label='Check Progress',
@@ -316,9 +346,9 @@ class Polls(commands.Cog):
         embed = discord.Embed(
             title=title,
             description=question,
-            color=0x2F3136
+            color=0x2F3136,
+            timestamp=datetime.now()
         ); 
-        # .set_author( name=f'ID: {poll_id}')
 
         view.message = await inter.channel.send(embed=embed, view=view)
 
@@ -337,10 +367,11 @@ class Polls(commands.Cog):
         else:
             question = DEFAULT_QUESTION
         modal = QuestionForm(question)
+        modal.inter = inter
+        modal.typ = 0
+        modal.Polls = self 
         await inter.response.send_modal(modal)
         await modal.wait()
-        question = str(modal.question)
-        await self.create_poll(inter, 0, question)
 
     @poll_cmd.command(name="shortanswer")
     @app_commands.default_permissions()
@@ -379,7 +410,6 @@ class Polls(commands.Cog):
             return
 
         await display_results(inter, last, keepprivate) 
-        # await inter.response.send_message('Not supported yet.', ephemeral=True)
 
     @poll_cmd.command(name="close")
     @app_commands.default_permissions()
