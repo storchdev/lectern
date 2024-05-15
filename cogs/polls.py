@@ -125,6 +125,9 @@ async def display_results(inter, poll, keepprivate):
     # await inter.response.send_message(embed=embed)
 
 class QuestionForm(discord.ui.Modal, title='What is the question you are asking?'):
+
+    _interaction: discord.Interaction | None = None
+
     question = discord.ui.TextInput(label='Type the question', 
             style=discord.TextStyle.long, 
             max_length=1024)
@@ -133,14 +136,12 @@ class QuestionForm(discord.ui.Modal, title='What is the question you are asking?
         super().__init__(timeout=600)
         self.question.default = default_question
 
-    async def on_submit(self, inter):
-        await inter.response.send_message(f'Created poll in {inter.channel.mention}', ephemeral=True)
-        question = str(self.question)
+    async def on_submit(self, inter: discord.Interaction) -> None:
+        self._interaction = inter
+        if not inter.response.is_done():
+            await inter.response.defer()
+        #await inter.response.send_message(f'A poll is going to be created in {inter.channel.mention}', ephemeral=True)
         self.stop()
-        await self.Polls.create_poll(self.inter, self.typ, question)
-
-    async def on_timeout(self):
-        logger.debug("Answer form timeout")
 
 class AnswerForm(discord.ui.Modal, title="Answer"):
     answer = discord.ui.TextInput(label='Enter your answer', 
@@ -160,9 +161,6 @@ class AnswerForm(discord.ui.Modal, title="Answer"):
         else:
             await inter.response.send_message('Poll has been closed.', ephemeral=True)
         self.stop()
-
-    async def on_timeout(self):
-        logger.debug("Question form timeout")
 
 # Based on examples on 
 # https://fallendeity.github.io/discord.py-masterclass/views
@@ -301,9 +299,9 @@ class Polls(commands.Cog):
                 style=discord.ButtonStyle.blurple
             )
 
-            async def answer_callback(answer_inter):
+            async def answer_callback(cb_inter):
                 modal = AnswerForm(poll)
-                await answer_inter.response.send_modal(modal)
+                await cb_inter.response.send_modal(modal)
 
             btn_answer.callback = answer_callback
             title = 'Short Answer Poll'
@@ -367,11 +365,13 @@ class Polls(commands.Cog):
         else:
             question = DEFAULT_QUESTION
         modal = QuestionForm(question)
-        modal.inter = inter
-        modal.typ = 0
-        modal.Polls = self 
         await inter.response.send_modal(modal)
         await modal.wait()
+        if modal._interaction is not None:
+            question = str(modal.question)
+            await self.create_poll(inter, 0, question)
+        else:
+            logger.info("Question modal timed out.")
 
     @poll_cmd.command(name="shortanswer")
     @app_commands.default_permissions()
@@ -390,8 +390,9 @@ class Polls(commands.Cog):
         modal = QuestionForm(question)
         await inter.response.send_modal(modal)
         await modal.wait()
-        question = str(modal.question)
-        await self.create_poll(inter, 1, question)
+        if modal._interaction is not None:
+            question = str(modal.question)
+            await self.create_poll(inter, 1, question)
 
     @poll_cmd.command(name="results")
     @app_commands.default_permissions()
