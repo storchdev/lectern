@@ -1,6 +1,7 @@
 from discord.ext import commands
 from discord import app_commands
 import discord
+from collections import Counter
 import time
 import asyncio
 import logging
@@ -18,8 +19,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_QUESTION = "Lecture 1.1 slide 10"
 
-def     get_unique_uc_id(inter):
-    return f"{inter.user.id}.{inter.channel_id}" # .{inter.guild_id}"
+def     get_uc_id(inter):
+    # return f"{inter.user.id}.{inter.channel_id}" # .{inter.guild_id}"
+    return f"{inter.user.name}.{inter.channel_id}"
 
 class PollQuestion:
 
@@ -30,13 +32,13 @@ class PollQuestion:
         self.responses = {}
         self.start_time = time.time()
         self.end_time = None
-        self.uc_id = get_unique_uc_id(inter) 
+        self.uc_id = get_uc_id(inter) 
         self.open = True
         self.saved = False
 
-    def add_answer(self, sid, answer):
-        self.responses[sid] = answer
-        logger.info(f"User {sid}'s answer is {answer}")
+    def add_answer(self, user, answer):
+        self.responses[user.name] = answer
+        logger.info(f"User {user.name}'s answer is {answer}")
 
     def end(self):
         self.end_time = time.time()
@@ -86,21 +88,12 @@ async def display_results(inter, poll, keepprivate):
         color=0x2F3136
     ); 
 
-    answerdict = {}
+    t_upper = [x.upper() for x in poll.responses.values()]
+    answers = Counter(t_upper).most_common(10)
 
-    for k, v in poll.responses.items():
-
-        answer = v.upper()
-
-        if answer in answerdict:
-            answerdict[answer] += 1
-        else:
-            answerdict[answer] = 1
-        
-    if poll.typ: 
-        answers = [ (k, v) for k, v in sorted(answerdict.items(), key=lambda item: item[1], reverse=True)]
-    else:
-        answers = [ (k, v) for k, v in sorted(answerdict.items(), key=lambda item: item[0], reverse=True)]
+    if poll.typ == 0: 
+        # if multiple choices, list answers alphabetically 
+        answers.sort(key=lambda item: item[0])
 
     embed.clear_fields()
 
@@ -156,7 +149,7 @@ class AnswerForm(discord.ui.Modal, title="Answer"):
         answer = str(self.answer)
         # await db.upsert_poll_response(inter.client, answer, inter.user.id, self.poll_id)
         if self.poll.isOpen():
-            self.poll.add_answer(inter.user.id, answer)
+            self.poll.add_answer(inter.user, answer)
             await inter.response.send_message(f'Your answer:\n`{answer}`', ephemeral=True)
         else:
             await inter.response.send_message('Poll has been closed.', ephemeral=True)
@@ -254,13 +247,14 @@ class Polls(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        # TODO: separate polls by uc_id
         self.polls = []
         # self.bot.tree.add_command(self.ctx_menu)
 
     def find_last_poll(self, inter):
         if len(self.polls) > 100:
             self.polls = self.polls[10:]
-        uc_id = get_unique_uc_id(inter) 
+        uc_id = get_uc_id(inter) 
         logger.info(f"Search last poll from {uc_id}")
         for p in reversed(self.polls):
             if p.uc_id == uc_id:
@@ -282,7 +276,7 @@ class Polls(commands.Cog):
 
         async def callback(button_inter):
             choice = button_inter.data['custom_id']
-            poll.add_answer(button_inter.user.id, choice)
+            poll.add_answer(button_inter.user, choice)
             await button_inter.response.send_message(f'You chose **{choice}**', ephemeral=True)
 
         if typ == 0:
@@ -429,7 +423,7 @@ class Polls(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def save(self, inter):
         """Close the last poll"""
-        filepath = Path(LOG_DIR).joinpath(get_unique_uc_id(inter))
+        filepath = Path(LOG_DIR).joinpath(get_uc_id(inter))
         filepath.parent.mkdir(parents=True, exist_ok=True)
         count = 0
         for p in [x for x in self.polls if (x.interaction.user.id == inter.user.id 
