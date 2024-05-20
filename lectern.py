@@ -9,7 +9,7 @@ import typing
 from config import TOKEN
 
 class MyBot(commands.Bot):
-    _uptime: datetime.datetime = datetime.datetime.now(datetime.UTC)
+    _uptime: datetime.datetime = datetime.datetime.now()
 
     def __init__(self, prefix: str, ext_dir: str, synced: bool, *args: typing.Any, **kwargs: typing.Any) -> None:
         intents = discord.Intents.default()
@@ -84,7 +84,7 @@ class MyBot(commands.Bot):
 
     @property
     def uptime(self) -> datetime.timedelta:
-        return datetime.datetime.now(datetime.UTC) - self._uptime
+        return datetime.datetime.now() - self._uptime
 
 @commands.command()
 @commands.guild_only()
